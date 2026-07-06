@@ -2,15 +2,15 @@
 
 ## Contents
 
-- `schema.sql` — BCNF-decomposed DDL with all constraints
-- `queries.sql` — DML inserts/updates/deletes and all advanced queries (Tasks 1.3–1.5)
+- `schema.sql` — the BCNF-decomposed DDL, constraints and all
+- `queries.sql` — inserts/updates/deletes plus all the advanced queries (Tasks 1.3–1.5)
 - `README.md` — this file
 
 ---
 
 ## Task 1.1 — Normalization Walkthrough
 
-### Original table
+### The original table
 
 ```
 StudentRecords(student_id, course_code, student_name, department,
@@ -20,82 +20,82 @@ StudentRecords(student_id, course_code, student_name, department,
 Composite primary key: (student_id, course_code)
 ```
 
-### Step 1 — Identify dependencies
+### Step 1 — Spotting the dependencies
 
-**Partial dependencies** (non-key attributes that depend on only *part* of the composite key):
+**Partial dependencies** (attributes that only depend on *part* of the composite key, not the whole thing):
 
 | Determinant | Dependent attributes | Problem |
 |---|---|---|
-| `student_id` alone | `student_name`, `department`, `advisor_name`, `advisor_email`, `enrollment_year` | These repeat for every course a student takes |
-| `course_code` alone | `course_name`, `instructor_name`, `instructor_email` | These repeat for every student in a course |
+| `student_id` alone | `student_name`, `department`, `advisor_name`, `advisor_email`, `enrollment_year` | Same values repeated for every course that student takes |
+| `course_code` alone | `course_name`, `instructor_name`, `instructor_email` | Same values repeated for every student in that course |
 
-**Transitive dependencies** (non-key attributes that depend on another non-key attribute):
+**Transitive dependencies** (a non-key attribute depending on another non-key attribute):
 
 | Determinant | Dependent | Via |
 |---|---|---|
 | `advisor_name` | `advisor_email` | `student_id → advisor_name → advisor_email` |
 | `instructor_name` | `instructor_email` | `course_code → instructor_name → instructor_email` |
 
-**Anomalies caused:**
+**What this breaks:**
 
-- *Update anomaly* — changing an advisor's email requires updating every row for every student that advisor supervises.
-- *Deletion anomaly* — deleting the last student enrolled in a course removes all knowledge of that course.
-- *Insertion anomaly* — a new course cannot be recorded until at least one student enrols in it (because `student_id` is part of the primary key).
+- *Update anomaly* — change one advisor's email and you'd have to update it on every row for every student they advise.
+- *Deletion anomaly* — drop the last student enrolled in a course and you lose all record that the course ever existed.
+- *Insertion anomaly* — can't add a new course until someone's actually enrolled in it, since `student_id` is part of the PK.
 
 ---
 
 ### Step 2 — First Normal Form (1NF)
 
-The original table already satisfies 1NF: all attributes are atomic and each row is uniquely identified by `(student_id, course_code)`.
+The original table's already fine on this front — every attribute is atomic, and `(student_id, course_code)` uniquely identifies each row.
 
 ---
 
-### Step 3 — Second Normal Form (2NF): remove partial dependencies
+### Step 3 — Second Normal Form (2NF): getting rid of partial dependencies
 
-Extract every attribute that depends on only one part of the composite key.
+Pull out anything that only depends on one half of the composite key.
 
-**Courses** — resolves the `course_code → course_name, instructor_name, instructor_email` partial dependency:
+**Courses** — fixes the `course_code → course_name, instructor_name, instructor_email` dependency:
 
 ```
 Courses(course_code PK, course_name, instructor_name, instructor_email)
 ```
 
-**Students (partial)** — resolves the `student_id → student_name, department, advisor_name, advisor_email, enrollment_year` partial dependency:
+**Students (partial)** — fixes `student_id → student_name, department, advisor_name, advisor_email, enrollment_year`:
 
 ```
 Students_2NF(student_id PK, student_name, department, advisor_name, advisor_email, enrollment_year)
 ```
 
-**Enrollments** — the only attribute that genuinely requires the full key:
+**Enrollments** — the one thing left that actually needs the full key:
 
 ```
 Enrollments(student_id FK, course_code FK, marks_obtained)
 PK: (student_id, course_code)
 ```
 
-The table is now in 2NF.
+That gets us to 2NF.
 
 ---
 
-### Step 4 — Third Normal Form / BCNF: remove transitive dependencies
+### Step 4 — Third Normal Form / BCNF: getting rid of transitive dependencies
 
-`Students_2NF` still contains `advisor_name → advisor_email`, a transitive dependency (non-key → non-key). Extract it.
+`Students_2NF` still has `advisor_name → advisor_email` hiding in it — a non-key attribute depending on another non-key attribute. Pull that out too.
 
-**Advisors** — resolves `advisor_name → advisor_email` and ties advisors to departments:
+**Advisors** — resolves `advisor_name → advisor_email` and links advisors to a department:
 
 ```
 Advisors(advisor_id PK, advisor_name, advisor_email, department_name FK)
 ```
 
-**Students (final)** — references advisor by surrogate key:
+**Students (final)** — now points at the advisor via a surrogate key instead:
 
 ```
 Students(student_id PK, student_name, department_name FK, advisor_id FK, enrollment_year)
 ```
 
-`Courses` still contains `instructor_name → instructor_email`. Because `instructor_email` is a unique fact about the instructor and every non-key attribute in `Courses` is determined by `course_code` (the sole candidate key), this is a transitive dependency that technically violates 3NF. The cleanest BCNF-compliant fix is to ensure `instructor_email` has a UNIQUE constraint so the functional dependency `instructor_name → instructor_email` is represented as a uniqueness rule rather than an uncontrolled duplication. In a full production schema an `Instructors` table would be added; for this assignment the UNIQUE constraint on `instructor_email` within `Courses` is sufficient to satisfy BCNF because `course_code` is the only determinant of non-key attributes and the instructor data appears exactly once per course.
+`Courses` still has `instructor_name → instructor_email` sitting in it. Since `instructor_email` is really just a fact about the instructor, and `course_code` is the only thing determining everything else in that table, this technically counts as a transitive dependency and would break strict 3NF. The simplest fix that still satisfies BCNF is putting a UNIQUE constraint on `instructor_email`, so the `instructor_name → instructor_email` rule is enforced as a uniqueness guarantee rather than something that could get duplicated inconsistently. A "real" production schema would probably split this into its own `Instructors` table, but for this assignment the UNIQUE constraint does the job — `course_code` is still the only determinant of non-key attributes, and instructor info only ever shows up once per course.
 
-**Departments** — a small reference table that gives `department_name` a home, enabling referential integrity between `Students` and `Advisors`:
+**Departments** — a small lookup table so `department_name` has somewhere to live, which lets `Students` and `Advisors` reference it properly:
 
 ```
 Departments(department_name PK)
@@ -120,18 +120,18 @@ Enrollments(student_id FK→Students, course_code FK→Courses,
             PK: (student_id, course_code))
 ```
 
-Every non-key attribute in every table is determined by the whole primary key and nothing but the primary key. The schema is in BCNF.
+Every non-key column in every table is determined by the whole primary key and nothing else. That's BCNF.
 
 ---
 
-### Step 5 — Data integrity check
+### Step 5 — Checking data integrity
 
-| Integrity type | Satisfied? | Reason |
+| Integrity type | Satisfied? | Why |
 |---|---|---|
-| **Entity integrity** | Yes | Every table has a declared PRIMARY KEY; no PK column allows NULL. |
-| **Referential integrity** | Yes | Every FK is declared with REFERENCES and ON UPDATE CASCADE / ON DELETE RESTRICT (or CASCADE for Enrollments), so dangling references cannot arise. |
-| **Domain integrity** | Yes | Data types are constrained (INT, VARCHAR, DECIMAL). CHECK constraints bound `marks_obtained` to 0–100 and `enrollment_year` to 1900–2100. UNIQUE constraints prevent duplicate emails. |
-| **User-defined integrity** | Yes | The CHECK constraint on `marks_obtained` enforces the business rule that a mark must be a valid percentage. Additional rules (e.g. capacity limits) would be enforced at the application layer or via triggers. |
+| **Entity integrity** | Yes | Every table has a real PRIMARY KEY, and no PK column can be NULL. |
+| **Referential integrity** | Yes | Every FK uses REFERENCES with ON UPDATE CASCADE / ON DELETE RESTRICT (CASCADE for Enrollments), so nothing can end up pointing at a row that doesn't exist. |
+| **Domain integrity** | Yes | Column types are all constrained (INT, VARCHAR, DECIMAL), CHECK constraints keep `marks_obtained` between 0–100 and `enrollment_year` between 1900–2100, and UNIQUE constraints stop duplicate emails. |
+| **User-defined integrity** | Yes | The CHECK on `marks_obtained` enforces the business rule that marks have to be a valid percentage. Anything more specific (like capacity limits) would live at the application layer or in triggers. |
 
 ---
 
@@ -139,51 +139,51 @@ Every non-key attribute in every table is determined by the whole primary key an
 
 ### Data types
 
-| Column | Type | Rationale |
+| Column | Type | Why |
 |---|---|---|
-| `student_id`, `advisor_id` | INT | Surrogate integer keys are compact and fast to index. |
-| `marks_obtained` | DECIMAL(5,2) | Exact fixed-point arithmetic avoids floating-point rounding; supports values like 78.50. |
-| `enrollment_year` | INT | A four-digit year fits in an INT; no time-of-day component is needed. |
-| Name / email columns | VARCHAR(150/200/255) | Variable-length strings save space versus CHAR; lengths chosen conservatively. |
-| `course_code` | VARCHAR(20) | Short alphanumeric codes (e.g. CS101); VARCHAR avoids padding. |
+| `student_id`, `advisor_id` | INT | Surrogate integer keys are small and quick to index. |
+| `marks_obtained` | DECIMAL(5,2) | Fixed-point so there's no floating-point rounding weirdness; handles values like 78.50 fine. |
+| `enrollment_year` | INT | A 4-digit year fits comfortably in an INT — no need for a full date/time. |
+| Name / email columns | VARCHAR(150/200/255) | Variable length saves space compared to CHAR; lengths are just conservative guesses. |
+| `course_code` | VARCHAR(20) | Short alphanumeric codes like CS101 — VARCHAR avoids wasted padding. |
 
 ### Constraints
 
-- **UNIQUE on email columns** — prevents two advisors or instructors sharing the same email address, which would make emails ambiguous as contact identifiers.
-- **ON DELETE CASCADE on Enrollments.student_id** — removing a student automatically cleans up their enrollment rows, preventing orphaned junction records.
-- **ON DELETE RESTRICT on course and department FKs** — prevents accidental deletion of a department that still has students, or a course that still has enrollments.
-- **DEFAULT 2024 on enrollment_year** — a reasonable stand-in for `CURRENT_YEAR`; in production this would use a trigger or application logic for the actual current year.
-- **CHECK (marks_obtained BETWEEN 0 AND 100)** — enforces the domain rule at the database layer regardless of application input.
+- **UNIQUE on the email columns** — stops two advisors (or instructors) from sharing an email, which would make it useless as a unique contact identifier.
+- **ON DELETE CASCADE on Enrollments.student_id** — deleting a student cleans up their enrollment rows automatically instead of leaving orphaned junction rows behind.
+- **ON DELETE RESTRICT on the course/department FKs** — stops you from accidentally deleting a department that still has students, or a course that still has people enrolled.
+- **DEFAULT 2024 on enrollment_year** — just a stand-in for "current year" for this assignment; a real system would pull that from a trigger or the application layer.
+- **CHECK (marks_obtained BETWEEN 0 AND 100)** — enforces the rule at the database level no matter what the application sends in.
 
-### Surrogate key for Advisors
+### Why Advisors gets a surrogate key
 
-`advisor_name` is not used as the primary key even though `advisor_name → advisor_email` is the dependency being resolved. Natural-name keys are fragile (name changes, duplicate names). A surrogate `advisor_id INT` is more stable and performs better in JOINs.
+`advisor_name` isn't used as the PK even though it's the attribute the dependency is built around. Names make bad keys — people share names, and names change. A surrogate `advisor_id INT` is more stable and just performs better in joins anyway.
 
 ---
 
 ## Task 1.5 — Transaction Analysis
 
-### 1.5a — Course transfer transaction
+### 1.5a — Moving a student between courses
 
-The transfer of student 101 from CS101 to CS404 is wrapped in a single transaction so that either both operations succeed or neither takes effect. If the INSERT into CS404 fails (for example, because CS404 does not exist and the FK constraint fires), the application issues a ROLLBACK, leaving the student still enrolled in CS101. This prevents the student from being unenrolled without a replacement course.
+Moving student 101 from CS101 to CS404 is wrapped in one transaction, so either both steps go through or neither does. If inserting into CS404 fails — say, because CS404 doesn't actually exist and the FK constraint kicks in — the app rolls back, and the student stays enrolled in CS101 instead of ending up with no course at all.
 
 ### 1.5b — Non-repeatable read
 
-When transaction T1 reads `marks_obtained` for student 101, then transaction T2 updates and commits that value, and T1 reads the row again and sees a different value, the anomaly is called a **non-repeatable read**. The minimum isolation level that prevents it is **REPEATABLE READ**. At that level the database guarantees that any row a transaction has already read will appear with the same value for the remainder of the transaction, regardless of concurrent commits. READ COMMITTED does not provide this guarantee.
+T1 reads student 101's marks. T2 comes along, updates that value, and commits. T1 reads the same row again and now sees something different. That's a **non-repeatable read**. The lowest isolation level that stops it is **REPEATABLE READ** — at that level, once a transaction has read a row, it keeps seeing the same value for the rest of the transaction no matter what else gets committed. READ COMMITTED doesn't give you that guarantee.
 
-### 1.5c — Phantom insert / capacity overrun
+### 1.5c — Phantom insert / going over capacity
 
-When two concurrent transactions both read the same enrollment count (finding the course has capacity), and both insert a new enrollment, the course ends up over-capacity. The anomaly is a **phantom read** (two transactions see the same pre-insert aggregate and both act on it, producing a result neither would have chosen if they had seen each other's write). The minimum isolation level that prevents phantoms is **SERIALIZABLE**. REPEATABLE READ prevents non-repeatable reads on rows already fetched but does not prevent new rows from appearing within a range that has been queried. SERIALIZABLE causes the database to detect the conflicting range access and abort one of the transactions.
+Two transactions both check the enrollment count for a course, both see room available, and both insert a new enrollment — and now the course is over capacity. This is a **phantom read**: both transactions acted on the same pre-insert count, and neither would have gone ahead if it had seen the other's write. The lowest isolation level that actually prevents this is **SERIALIZABLE**. REPEATABLE READ stops non-repeatable reads on rows you've already fetched, but it won't stop new rows from showing up in a range you've already queried. SERIALIZABLE catches that conflicting range access and aborts one of the transactions.
 
 ### 1.5d — MVCC and consistent snapshots
 
-Under **Multi-Version Concurrency Control (MVCC)** the database retains multiple versions of each row. When a transaction begins, the engine assigns it a transaction ID and uses that ID to determine which row version is visible.
+Under **MVCC**, the database keeps multiple versions of each row around. When a transaction starts, it gets assigned an ID, and that ID determines which version of each row it's allowed to see.
 
-- If the reporting transaction R runs at **READ COMMITTED**, its snapshot is refreshed at the start of each statement. After write transaction W commits, R's next SELECT will see the updated value (90) because a new statement means a new snapshot.
-- If R runs at **REPEATABLE READ** (or SNAPSHOT isolation), its snapshot is taken once when the transaction begins. W's committed update is stored as a newer row version, but the engine continues to serve R the older version (marks = 78) because that version pre-dates R's snapshot. R is never blocked by W, and W is never blocked by R — this is the key concurrency benefit of MVCC over lock-based isolation.
+- If reporting transaction R runs at **READ COMMITTED**, its snapshot refreshes at the start of every statement. So once write transaction W commits, R's next SELECT sees the new value (90), because a new statement means a fresh snapshot.
+- If R runs at **REPEATABLE READ** (or SNAPSHOT isolation), its snapshot gets locked in once, right when the transaction starts. W's update creates a newer row version, but R keeps getting served the old one (marks = 78) since that's the version that existed when R's snapshot was taken. Neither transaction blocks the other — that's really the whole point of MVCC over lock-based isolation.
 
-The isolation level that guarantees a consistent snapshot for the entire transaction lifetime is **REPEATABLE READ** (called SNAPSHOT ISOLATION in SQL Server; PostgreSQL's REPEATABLE READ also uses full snapshot semantics).
+So the isolation level that keeps a consistent snapshot for the entire transaction is **REPEATABLE READ** (SQL Server calls this SNAPSHOT isolation; Postgres's REPEATABLE READ works the same way, with full snapshot semantics).
 
-**Trade-off compared to READ COMMITTED:**
+**Trade-off vs READ COMMITTED:**
 
-REPEATABLE READ requires the database to retain old row versions in the version store (dead tuples in PostgreSQL's heap, undo segments in Oracle/MySQL InnoDB) for as long as any REPEATABLE READ transaction is open. A long-running reporting transaction can therefore cause significant version-store bloat: in PostgreSQL, autovacuum cannot reclaim dead tuples that are still needed by open transactions, leading to table and index bloat and degraded query performance for the entire cluster. READ COMMITTED avoids this because its per-statement snapshots allow old versions to be reclaimed much sooner.
+REPEATABLE READ means the database has to hold onto old row versions (dead tuples in Postgres, undo segments in Oracle/InnoDB) for as long as any REPEATABLE READ transaction stays open. A long-running report can cause real version-store bloat — in Postgres specifically, autovacuum can't clean up dead tuples that some open transaction might still need, so tables and indexes bloat and query performance suffers cluster-wide. READ COMMITTED sidesteps this because its per-statement snapshots let old versions get cleaned up much sooner.
