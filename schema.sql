@@ -1,23 +1,21 @@
--- =============================================================
 -- schema.sql
--- University Student Records — BCNF Decomposition
--- Compatible with PostgreSQL and MySQL (notes where they differ)
--- =============================================================
+-- University Student Records - BCNF Decomposition
+-- Should work on both Postgres and MySQL, noted a couple spots where they differ
 
--- Drop tables in reverse dependency order (safe re-run)
+-- dropping in reverse dependency order so this can be re-run safely
 DROP TABLE IF EXISTS Enrollments;
 DROP TABLE IF EXISTS Students;
 DROP TABLE IF EXISTS Courses;
 DROP TABLE IF EXISTS Advisors;
 DROP TABLE IF EXISTS Departments;
 
--- Also drop the legacy flat table if it exists
+-- also dropping the old flat table if it's still around
 DROP TABLE IF EXISTS StudentRecords;
 
 -- -------------------------------------------------------------
 -- 1. Departments
---    Resolves: stores the canonical department name.
---    Primary key: department_name
+--    Just the canonical list of department names.
+--    PK: department_name
 -- -------------------------------------------------------------
 CREATE TABLE Departments (
     department_name VARCHAR(100) NOT NULL,
@@ -26,10 +24,10 @@ CREATE TABLE Departments (
 
 -- -------------------------------------------------------------
 -- 2. Advisors
---    Resolves transitive dependency: advisor_name → advisor_email
---    (both were non-key attributes of StudentRecords that depended
---     only on advisor_name, not on the full composite key).
---    Primary key: advisor_id
+--    This pulls out the transitive dependency advisor_name -> advisor_email
+--    (in the original flat table those attributes only depended on
+--    advisor_name, not the full composite key, so they didn't belong there).
+--    PK: advisor_id
 -- -------------------------------------------------------------
 CREATE TABLE Advisors (
     advisor_id      INT             NOT NULL,
@@ -46,11 +44,10 @@ CREATE TABLE Advisors (
 
 -- -------------------------------------------------------------
 -- 3. Courses
---    Resolves partial dependency: course_code → course_name,
---    instructor_name, instructor_email.
---    These attributes depended only on course_code, not on the
---    full composite key (student_id, course_code).
---    Primary key: course_code
+--    Pulls out the partial dependency: course_code -> course_name,
+--    instructor_name, instructor_email. These only depended on
+--    course_code, not on the full (student_id, course_code) key.
+--    PK: course_code
 -- -------------------------------------------------------------
 CREATE TABLE Courses (
     course_code         VARCHAR(20)     NOT NULL,
@@ -63,11 +60,10 @@ CREATE TABLE Courses (
 
 -- -------------------------------------------------------------
 -- 4. Students
---    Resolves partial dependency: student_id → student_name,
---    department, advisor_id.
---    These attributes depended only on student_id, not on the
---    full composite key.
---    Primary key: student_id
+--    Same idea - pulls out student_id -> student_name, department,
+--    advisor_id, since those only depend on student_id and not on
+--    the full composite key.
+--    PK: student_id
 -- -------------------------------------------------------------
 CREATE TABLE Students (
     student_id      INT             NOT NULL,
@@ -89,12 +85,13 @@ CREATE TABLE Students (
 
 -- -------------------------------------------------------------
 -- 5. Enrollments
---    The only remaining fact that truly depends on the full
+--    The one thing left that actually depends on the full
 --    composite key (student_id, course_code): marks_obtained.
---    Resolves: insertion anomaly (course can exist without a
---    student) and deletion anomaly (removing an enrollment does
---    not delete the student or course records).
---    Primary key: (student_id, course_code)
+--    Splitting this out is what fixes the insertion anomaly
+--    (a course can now exist with no students enrolled) and the
+--    deletion anomaly (dropping an enrollment doesn't wipe out
+--    the student or course rows along with it).
+--    PK: (student_id, course_code)
 -- -------------------------------------------------------------
 CREATE TABLE Enrollments (
     student_id      INT             NOT NULL,
@@ -115,7 +112,8 @@ CREATE TABLE Enrollments (
 );
 
 -- -------------------------------------------------------------
--- Legacy flat table (for Task 1.3d — bulk DELETE demonstration)
+-- Legacy flat table - kept around just for the bulk DELETE demo
+-- in Task 1.3d
 -- -------------------------------------------------------------
 CREATE TABLE StudentRecords (
     student_id      INT,
